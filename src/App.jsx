@@ -25,22 +25,40 @@ const COLORS = {
 
 const BENEFITS = [
   {
-    name: 'MDLive Telehealth', icon: '🩺',
-    description: '24/7 access to board-certified doctors via phone or video',
-    features: ['$0 copay for all visits', 'Available nationwide', 'Prescriptions sent to your pharmacy', 'Mental health counseling available'],
+    name: 'Telemedicine & Virtual Care', icon: '🩺',
+    description: 'Care when you need it, 24/7. Access doctors and health professionals with no copay.',
+    features: ['Covers your entire household', 'Urgent care & primary care', 'Mental health providers', 'Dermatology'],
     color: COLORS.sky
   },
   {
-    name: 'AllOne Health EAP', icon: '💚',
-    description: 'Confidential counseling and life coaching services',
-    features: ['8 free counseling sessions per year', 'Work-life balance support', 'Legal & financial consultations', '24/7 crisis support'],
+    name: 'Employee Assistance Program', icon: '💚',
+    description: 'Comprehensive support for work and life challenges.',
+    features: ['Medical advocacy & coaching', 'Work-life referrals', 'Financial consultations & legal referrals', '24/7 crisis management hotline'],
     color: COLORS.lime
   },
   {
-    name: 'OVAL Rx Discounts', icon: '💊',
-    description: 'Prescription discount program for you and your family',
-    features: ['Save up to 80% on prescriptions', 'Accepted at 60,000+ pharmacies', 'No enrollment required', 'Covers family members'],
+    name: 'OVAL Modern Healthcare', icon: '💊',
+    description: 'Wholesale medication platform available in all 50 states.',
+    features: ['Dermatology & hormone care', 'Mental health treatments', "Men's & women's health", 'Anti-aging, performance & oral weight-care medications'],
     color: COLORS.navy
+  },
+  {
+    name: 'Prescription Discount Card', icon: '💳',
+    description: 'Save on prescription medications at pharmacies nationwide.',
+    features: ['Accepted at major pharmacies', 'No enrollment required', 'Covers the whole family'],
+    color: '#6366f1'
+  },
+  {
+    name: 'Vitals Facial Scanning', icon: '📱',
+    description: 'Take your vitals anytime using the Anura app.',
+    features: ['Heart rate & breathing', 'BMI & stress level', 'Results in 30 seconds'],
+    color: COLORS.orange
+  },
+  {
+    name: 'Personal Health Coach & Wellness', icon: '🏋️',
+    description: 'Lifestyle management and fitness resources.',
+    features: ['Personal health coaching', 'Workout video library', 'Lifestyle management tools'],
+    color: '#10b981'
   }
 ];
 
@@ -277,7 +295,7 @@ export default function EmployeeEnrollment() {
         method: 'POST', headers,
         body: JSON.stringify({
           recipient_type: 'internal',
-          recipient_id: '00000000-0000-0000-0000-000000000000',
+          recipient_id: '8fba22c5-1d5b-4549-8465-1f3627d616ea',
           title: `${employee.first_name} ${employee.last_name} opted out`,
           message: `${employee.first_name} ${employee.last_name} from ${organization?.name || 'Unknown Org'} has opted out. Reason: ${reason || 'No reason given'}`,
           organization_id: employee.organization_id,
@@ -446,9 +464,9 @@ export default function EmployeeEnrollment() {
             <p style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: COLORS.red }}>By opting out, you will lose:</p>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: COLORS.darkGray, lineHeight: 1.8 }}>
               <li><strong>{formatCurrency(employee?.net_benefit_monthly || 0)}/month</strong> in additional take-home pay</li>
-              <li>Free 24/7 telehealth visits (MDLive)</li>
-              <li>8 free counseling sessions (AllOne Health)</li>
-              <li>Prescription discount program (OVAL)</li>
+              <li>Free 24/7 telemedicine & virtual care for your household</li>
+              <li>Employee Assistance Program (advocacy, coaching, crisis hotline)</li>
+              <li>OVAL Modern Healthcare, prescription discounts & more</li>
             </ul>
           </div>
 
@@ -592,7 +610,7 @@ export default function EmployeeEnrollment() {
               <SavingsRow label="FIT Savings" amount={fitSavingsMonthly} color={COLORS.green} />
               {ssSavingsMonthly > 0 && <SavingsRow label="Social Security Savings" amount={ssSavingsMonthly} color={COLORS.green} />}
               <SavingsRow label="Medicare Savings" amount={medSavingsMonthly} color={COLORS.green} />
-              <SavingsRow label="Employee Fee" amount={-feeMonthly} color={COLORS.red} />
+              <SavingsRow label={`Employee Fee (${formatCurrency(employee?.lw_fee_per_period || feePP)}/check)`} amount={-feeMonthly} color={COLORS.red} />
               <div style={{ borderTop: `1px solid ${COLORS.lightGray}`, paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600 }}>
                 <span style={{ color: COLORS.navy }}>Net Monthly Benefit</span>
                 <span style={{ color: COLORS.lime }}>{formatCurrency(netBenefitMonthly)}</span>
