@@ -25,40 +25,39 @@ const COLORS = {
 
 const BENEFITS = [
   {
-    name: 'Telemedicine & Virtual Care', icon: '🩺',
-    description: 'Care when you need it, 24/7. Access doctors and health professionals with no copay.',
-    features: ['Covers your entire household', 'Urgent care & primary care', 'Mental health providers', 'Dermatology'],
+    name: '$0 Copay Telemedicine & Virtual Care',
+    poweredBy: 'Powered by MD Live™',
+    icon: '🩺',
+    description: 'Care when you need it, 24/7. Access doctors and health professionals with no copay. Covers your entire household — urgent care, primary care, mental health providers, and dermatology.',
     color: COLORS.sky
   },
   {
-    name: 'Employee Assistance Program', icon: '💚',
-    description: 'Comprehensive support for work and life challenges.',
-    features: ['Medical advocacy & coaching', 'Work-life referrals', 'Financial consultations & legal referrals', '24/7 crisis management hotline'],
+    name: 'Employee Assistance Program',
+    poweredBy: 'Powered by AllOne Health™',
+    icon: '💚',
+    description: 'Confidential support including medical advocacy, coaching, work-life referrals, financial consultations, legal referrals, and a 24/7 crisis management hotline.',
     color: COLORS.lime
   },
   {
-    name: 'OVAL Modern Healthcare', icon: '💊',
-    description: 'Wholesale medication platform available in all 50 states.',
-    features: ['Dermatology & hormone care', 'Mental health treatments', "Men's & women's health", 'Anti-aging, performance & oral weight-care medications'],
+    name: 'OVAL™ Modern Healthcare',
+    poweredBy: null,
+    icon: '💊',
+    description: "Access to dermatology, hormone care, mental health treatments, men's & women's health, anti-aging & performance, and oral weight-care medications. Available in all 50 states.",
     color: COLORS.navy
   },
   {
-    name: 'Prescription Discount Card', icon: '💳',
+    name: 'Prescription Discount Card',
+    poweredBy: null,
+    icon: '💳',
     description: 'Save on prescription medications at pharmacies nationwide.',
-    features: ['Accepted at major pharmacies', 'No enrollment required', 'Covers the whole family'],
     color: '#6366f1'
   },
   {
-    name: 'Vitals Facial Scanning', icon: '📱',
-    description: 'Take your vitals anytime using the Anura app.',
-    features: ['Heart rate & breathing', 'BMI & stress level', 'Results in 30 seconds'],
+    name: 'Vitals Facial Scanning',
+    poweredBy: 'Powered by Anura™',
+    icon: '📱',
+    description: 'Take your vitals anytime using the Anura™ app — heart rate, breathing, BMI, stress level, and more in 30 seconds.',
     color: COLORS.orange
-  },
-  {
-    name: 'Personal Health Coach & Wellness', icon: '🏋️',
-    description: 'Lifestyle management and fitness resources.',
-    features: ['Personal health coaching', 'Workout video library', 'Lifestyle management tools'],
-    color: '#10b981'
   }
 ];
 
@@ -97,6 +96,7 @@ export default function EmployeeEnrollment() {
   const [optOutReasonOther, setOptOutReasonOther] = useState('');
   const [daysRemaining, setDaysRemaining] = useState(14);
   const [campaign, setCampaign] = useState(null);
+  const [acknowledged, setAcknowledged] = useState(false);
   const pageStartTime = useRef(Date.now());
   const viewTracked = useRef(false);
 
@@ -182,6 +182,10 @@ export default function EmployeeEnrollment() {
           method: 'PATCH', headers, body: JSON.stringify(updates)
         });
         setEmployee(prev => ({ ...prev, ...updates }));
+      }
+
+      if (emp.email_acknowledged_at || emp.enrollment_status === 'Enrolled') {
+        setAcknowledged(true);
       }
 
       if (emp.enrollment_status === 'Opted Out') {
@@ -345,6 +349,35 @@ export default function EmployeeEnrollment() {
     } catch (err) {
       console.error('Opt-out error:', err);
       alert('Failed to process opt-out. Please try again.');
+    }
+    setLoading(false);
+  };
+
+  const handleAcknowledge = async () => {
+    setLoading(true);
+    try {
+      const updates = { email_acknowledged_at: new Date().toISOString() };
+      if (['Viewed', 'Email Sent', 'Pending'].includes(employee.enrollment_status)) {
+        updates.enrollment_status = 'Enrolled';
+      }
+      await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
+        method: 'PATCH', headers,
+        body: JSON.stringify(updates)
+      });
+      await fetch(`${SUPABASE_URL}/rest/v1/email_events`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          employee_id: employee.id,
+          organization_id: employee.organization_id,
+          campaign_id: campaign?.id || null,
+          event_type: 'acknowledged'
+        })
+      });
+      setEmployee(prev => ({ ...prev, ...updates }));
+      setAcknowledged(true);
+    } catch (err) {
+      console.error('Acknowledgment error:', err);
+      alert('Failed to save. Please try again.');
     }
     setLoading(false);
   };
@@ -630,20 +663,45 @@ export default function EmployeeEnrollment() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {BENEFITS.map((b, i) => (
               <div key={i} style={{ background: COLORS.gray, borderRadius: 12, padding: 20, borderLeft: `4px solid ${b.color}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: b.description ? 10 : 0 }}>
                   <span style={{ fontSize: 28 }}>{b.icon}</span>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: COLORS.navy }}>{b.name}</h3>
-                    <p style={{ margin: '2px 0 0', fontSize: 13, color: COLORS.darkGray }}>{b.description}</p>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: COLORS.navy }}>{b.name}</h3>
+                    {b.poweredBy && <p style={{ margin: '2px 0 0', fontSize: 12, color: COLORS.sky, fontStyle: 'italic' }}>{b.poweredBy}</p>}
                   </div>
                 </div>
-                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: COLORS.darkGray, lineHeight: 1.8 }}>
-                  {b.features.map((f, j) => <li key={j}>{f}</li>)}
-                </ul>
+                {b.description && <p style={{ margin: 0, fontSize: 13, color: COLORS.darkGray, lineHeight: 1.7 }}>{b.description}</p>}
               </div>
             ))}
           </div>
         </div>
+
+        {/* Acknowledgment Button */}
+        {employee?.enrollment_status !== 'Opted Out' && (
+          <div style={{ background: COLORS.white, borderRadius: 20, padding: 28, marginBottom: 20, boxShadow: '0 10px 40px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+            {acknowledged ? (
+              <>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+                <p style={{ color: COLORS.lime, fontWeight: 700, fontSize: 17, margin: '0 0 8px' }}>Enrolled</p>
+                <p style={{ color: COLORS.darkGray, fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+                  Thank you! Your enrollment is confirmed. You'll receive login credentials for your wellness products before your effective date.
+                </p>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleAcknowledge}
+                  disabled={loading}
+                  style={{ width: '100%', padding: '18px 24px', fontSize: 17, fontWeight: 700, background: `linear-gradient(135deg, ${COLORS.lime}, #5fa832)`, color: COLORS.white, border: 'none', borderRadius: 12, cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 16px rgba(122,193,67,0.35)', marginBottom: 12 }}>
+                  {loading ? 'Saving...' : "I've Reviewed My Benefits"}
+                </button>
+                <p style={{ color: COLORS.darkGray, fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                  Clicking confirms you've reviewed your benefits. You'll be enrolled automatically if you don't opt out.
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Enrollment Status */}
         <div style={{ background: COLORS.white, borderRadius: 20, padding: 28, marginBottom: 20, boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
@@ -671,15 +729,17 @@ export default function EmployeeEnrollment() {
         </div>
 
         {/* Opt-Out Section */}
-        {daysRemaining > 0 && employee?.enrollment_status !== 'Enrolled' && employee?.enrollment_status !== 'Opted Out' && (
-          <div style={{ background: COLORS.white, borderRadius: 20, padding: 28, marginBottom: 20, boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
-            <h2 style={{ color: COLORS.navy, fontSize: 18, margin: '0 0 8px', fontWeight: 600 }}>Don't Want These Benefits?</h2>
-            <p style={{ color: COLORS.darkGray, fontSize: 14, margin: '0 0 16px', lineHeight: 1.5 }}>
-              You have <strong>{daysRemaining} days</strong> remaining to opt out. After this window closes, you will be enrolled.
+        {daysRemaining > 0 && !acknowledged && employee?.enrollment_status !== 'Enrolled' && employee?.enrollment_status !== 'Opted Out' && (
+          <div style={{ background: COLORS.white, borderRadius: 20, padding: '20px 28px', marginBottom: 20, boxShadow: '0 4px 16px rgba(0,0,0,0.06)', borderTop: `3px solid ${COLORS.lightGray}` }}>
+            <p style={{ color: COLORS.darkGray, fontSize: 13, margin: '0 0 12px', lineHeight: 1.6 }}>
+              If you prefer not to participate, you must opt out by{' '}
+              <strong style={{ color: COLORS.red }}>
+                {deadlineStr || `${daysRemaining} days from today`}
+              </strong>.
             </p>
             <button onClick={() => setStep('optout')}
-              style={{ width: '100%', padding: 14, fontSize: 15, fontWeight: 500, background: 'transparent', color: COLORS.red, border: `2px solid ${COLORS.red}`, borderRadius: 10, cursor: 'pointer' }}>
-              I Want to Opt Out
+              style={{ padding: '10px 20px', fontSize: 13, fontWeight: 500, background: 'transparent', color: COLORS.darkGray, border: `1px solid ${COLORS.lightGray}`, borderRadius: 8, cursor: 'pointer' }}>
+              Opt Out
             </button>
           </div>
         )}
