@@ -100,13 +100,16 @@ export default function EmployeeEnrollment() {
   const pageStartTime = useRef(Date.now());
   const viewTracked = useRef(false);
 
-  // Check URL for opt_out_id or benefits page
+  // Check URL for portal token, opt_out_id, or fall back to login form
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
     const optOutId = params.get('id');
     const page = window.location.pathname;
 
-    if (optOutId) {
+    if (token) {
+      loadByToken(token);
+    } else if (optOutId) {
       loadByOptOutId(optOutId, page.includes('/optout'));
     } else {
       setStep('login');
@@ -127,6 +130,70 @@ export default function EmployeeEnrollment() {
     window.addEventListener('beforeunload', trackTime);
     return () => window.removeEventListener('beforeunload', trackTime);
   }, [employee]);
+
+  const loadByToken = async (token) => {
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/employees?portal_token=eq.${encodeURIComponent(token)}&select=*`,
+        { headers: headersGet }
+      );
+      const emps = await res.json();
+      if (!emps || emps.length === 0) {
+        setLoginError('Invalid or expired link. Please contact your HR department.');
+        setStep('login');
+        return;
+      }
+      const emp = emps[0];
+      setEmployee(emp);
+
+      const orgRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/organizations?id=eq.${emp.organization_id}&select=*`,
+        { headers: headersGet }
+      );
+      const orgs = await orgRes.json();
+      if (orgs?.length > 0) setOrganization(orgs[0]);
+
+      const campRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/enrollment_campaigns?organization_id=eq.${emp.organization_id}&status=in.(In Progress,Sending,Completed)&order=created_at.desc&limit=1`,
+        { headers: headersGet }
+      );
+      const camps = await campRes.json();
+      if (camps?.length > 0) setCampaign(camps[0]);
+
+      if (emp.enrollment_email_sent_at) {
+        const sent = new Date(emp.enrollment_email_sent_at);
+        const deadline = new Date(sent.getTime() + 14 * 24 * 60 * 60 * 1000);
+        setDaysRemaining(Math.max(0, Math.ceil((deadline - new Date()) / (1000 * 60 * 60 * 24))));
+      }
+
+      if (!viewTracked.current) {
+        viewTracked.current = true;
+        pageStartTime.current = Date.now();
+        const viewCount = (emp.enrollment_page_view_count || 0) + 1;
+        const updates = {
+          enrollment_page_view_count: viewCount,
+          enrollment_page_viewed_at: new Date().toISOString(),
+        };
+        if (emp.enrollment_status === 'Email Sent') {
+          updates.enrollment_status = 'Viewed';
+        }
+        await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${emp.id}`, {
+          method: 'PATCH', headers, body: JSON.stringify(updates)
+        });
+        setEmployee(prev => ({ ...prev, ...updates }));
+      }
+
+      if (emp.email_acknowledged_at || emp.enrollment_status === 'Enrolled') {
+        setAcknowledged(true);
+      }
+
+      setStep(emp.enrollment_status === 'Opted Out' ? 'opted-out' : 'dashboard');
+    } catch (err) {
+      console.error('Token load error:', err);
+      setLoginError('Something went wrong. Please try again.');
+      setStep('login');
+    }
+  };
 
   const loadByOptOutId = async (optOutId, isOptOutPage) => {
     try {
