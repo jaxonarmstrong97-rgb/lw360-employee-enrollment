@@ -118,17 +118,25 @@ export default function EmployeeEnrollment() {
 
   // Track page view time on unmount / navigation
   useEffect(() => {
-    const trackTime = () => {
-      if (employee?.id && viewTracked.current) {
-        const seconds = Math.floor((Date.now() - pageStartTime.current) / 1000);
-        navigator.sendBeacon(
-          `${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`,
-          new Blob([JSON.stringify({ enrollment_page_time_seconds: seconds })], { type: 'application/json' })
-        );
-      }
+    const startTime = Date.now();
+    const handleUnload = () => {
+      if (!employee?.id) return;
+      const seconds = Math.round((Date.now() - startTime) / 1000);
+      if (seconds < 5) return;
+      fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ enrollment_page_time_seconds: seconds }),
+        keepalive: true
+      });
     };
-    window.addEventListener('beforeunload', trackTime);
-    return () => window.removeEventListener('beforeunload', trackTime);
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
   }, [employee]);
 
   const loadByToken = async (token) => {
@@ -189,7 +197,6 @@ export default function EmployeeEnrollment() {
 
       setStep(emp.enrollment_status === 'Opted Out' ? 'opted-out' : 'dashboard');
     } catch (err) {
-      console.error('Token load error:', err);
       setLoginError('Something went wrong. Please try again.');
       setStep('login');
     }
@@ -198,7 +205,7 @@ export default function EmployeeEnrollment() {
   const loadByOptOutId = async (optOutId, isOptOutPage) => {
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/employees?opt_out_id=eq.${optOutId}&select=*`,
+        `${SUPABASE_URL}/rest/v1/employees?opt_out_id=eq.${encodeURIComponent(optOutId)}&select=*`,
         { headers: headersGet }
       );
       const emps = await res.json();
@@ -263,7 +270,6 @@ export default function EmployeeEnrollment() {
         setStep('dashboard');
       }
     } catch (err) {
-      console.error('Load error:', err);
       setLoginError('Something went wrong. Please try again.');
       setStep('login');
     }
@@ -319,15 +325,24 @@ export default function EmployeeEnrollment() {
         viewTracked.current = true;
         pageStartTime.current = Date.now();
         const viewCount = (emp.enrollment_page_view_count || 0) + 1;
+        const viewUpdates = {
+          enrollment_page_view_count: viewCount,
+          enrollment_page_viewed_at: new Date().toISOString(),
+          enrollment_status: 'Viewed'
+        };
         await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${emp.id}`, {
           method: 'PATCH', headers,
-          body: JSON.stringify({ enrollment_page_view_count: viewCount, enrollment_page_viewed_at: new Date().toISOString() })
+          body: JSON.stringify(viewUpdates)
         });
+        setEmployee(prev => ({ ...prev, ...viewUpdates }));
+      }
+
+      if (emp.email_acknowledged_at || emp.enrollment_status === 'Enrolled') {
+        setAcknowledged(true);
       }
 
       setStep(emp.enrollment_status === 'Opted Out' ? 'opted-out' : 'dashboard');
     } catch (err) {
-      console.error('Login error:', err);
       setLoginError('Something went wrong. Please try again.');
     }
     setLoading(false);
@@ -393,28 +408,25 @@ export default function EmployeeEnrollment() {
           })
         });
       } catch (emailErr) {
-        console.error('Opt-out confirmation email failed:', emailErr);
+        // email failure is non-critical, continue
       }
 
       // Update campaign opted_out count
       if (campaign?.id) {
-        const campRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/enrollment_campaigns?id=eq.${campaign.id}&select=opted_out`,
-          { headers: headersGet }
-        );
-        const campData = await campRes.json();
-        if (campData?.length > 0) {
-          await fetch(`${SUPABASE_URL}/rest/v1/enrollment_campaigns?id=eq.${campaign.id}`, {
-            method: 'PATCH', headers,
-            body: JSON.stringify({ opted_out: (campData[0].opted_out || 0) + 1 })
-          });
-        }
+        await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_campaign_opted_out`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ p_campaign_id: campaign.id })
+        });
       }
 
       setEmployee(prev => ({ ...prev, enrollment_status: 'Opted Out', opted_out_at: new Date().toISOString() }));
       setStep('opted-out');
     } catch (err) {
-      console.error('Opt-out error:', err);
       alert('Failed to process opt-out. Please try again.');
     }
     setLoading(false);
@@ -443,7 +455,6 @@ export default function EmployeeEnrollment() {
       setEmployee(prev => ({ ...prev, ...updates }));
       setAcknowledged(true);
     } catch (err) {
-      console.error('Acknowledgment error:', err);
       alert('Failed to save. Please try again.');
     }
     setLoading(false);
@@ -525,7 +536,7 @@ export default function EmployeeEnrollment() {
   // Opted Out Confirmation
   if (step === 'opted-out') {
     return (
-      <div style={{ minHeight: '100vh', background: COLORS.gray, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ minHeight: '100vh', background: COLORS.gray, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, paddingTop: employee?.is_test ? '40px' : 20 }}>
         {employee?.is_test && <TestBanner />}
         <div style={{ background: COLORS.white, borderRadius: 20, padding: 48, maxWidth: 500, width: '100%', textAlign: 'center', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
           <div style={{ width: 80, height: 80, borderRadius: '50%', background: `${COLORS.darkGray}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', fontSize: 36 }}>✓</div>
@@ -551,7 +562,7 @@ export default function EmployeeEnrollment() {
   // Opt-Out Confirmation Screen
   if (step === 'optout') {
     return (
-      <div style={{ minHeight: '100vh', background: COLORS.gray, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ minHeight: '100vh', background: COLORS.gray, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, paddingTop: employee?.is_test ? '40px' : 20 }}>
         {employee?.is_test && <TestBanner />}
         <div style={{ background: COLORS.white, borderRadius: 20, padding: 40, maxWidth: 500, width: '100%', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
@@ -629,7 +640,7 @@ export default function EmployeeEnrollment() {
   const deadlineStr = campaignEndDate ? campaignEndDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null;
 
   return (
-    <div style={{ minHeight: '100vh', background: COLORS.gray }}>
+    <div style={{ minHeight: '100vh', background: COLORS.gray, paddingTop: employee?.is_test ? '40px' : 0 }}>
       {/* TEST DATA Banner */}
       {employee?.is_test && <TestBanner />}
 
