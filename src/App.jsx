@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { COLORS } from '@shared/constants/colors';
 import { BENEFITS, OPT_OUT_REASONS } from '@shared/constants/benefits';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, headers, headersGet } from '@shared/constants/supabase';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, headers, headersGet, getHeadersWithToken, getHeadersGetWithToken } from '@shared/constants/supabase';
 import { getPremiumPerPeriod, getFeePerPeriod, PAY_PERIODS } from '@shared/constants/fees';
 import { formatCurrency } from '@shared/utils/formatters';
 import { useSessionTimeout, SessionWarningModal } from '@shared/hooks/useSessionTimeout';
@@ -34,6 +34,10 @@ export default function EmployeeEnrollment() {
   const [acknowledged, setAcknowledged] = useState(false);
   const pageStartTime = useRef(Date.now());
   const viewTracked = useRef(false);
+  // Portal token from URL — required for RLS on employees/email_events tables.
+  // The Supabase RLS policies evaluate `portal_token = current_setting(...x-portal-token)`,
+  // so every employee-related fetch MUST include this header or return empty.
+  const portalTokenRef = useRef(null);
 
   // Check URL for portal token, opt_out_id, or fall back to login form
   useEffect(() => {
@@ -55,17 +59,12 @@ export default function EmployeeEnrollment() {
   useEffect(() => {
     const startTime = Date.now();
     const handleUnload = () => {
-      if (!employee?.id) return;
+      if (!employee?.id || !portalTokenRef.current) return;
       const seconds = Math.round((Date.now() - startTime) / 1000);
       if (seconds < 5) return;
       fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
         method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        },
+        headers: getHeadersWithToken(portalTokenRef.current),
         body: JSON.stringify({ enrollment_page_time_seconds: seconds }),
         keepalive: true
       });
@@ -82,12 +81,14 @@ export default function EmployeeEnrollment() {
         setStep('login');
         return;
       }
+      // Stash token for subsequent authenticated fetches
+      portalTokenRef.current = token;
       // Require portal_token_expires_at to be in the future (tokens expire ~44 days
       // after import — 14-day window + 30-day grace for set-password flow).
       const nowIso = new Date().toISOString();
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/employees?portal_token=eq.${encodeURIComponent(token)}&portal_token_expires_at=gt.${encodeURIComponent(nowIso)}&select=*`,
-        { headers: headersGet }
+        { headers: getHeadersGetWithToken(token) }
       );
       const emps = await res.json();
       if (!emps || emps.length === 0) {
@@ -130,7 +131,7 @@ export default function EmployeeEnrollment() {
           updates.enrollment_status = 'Viewed';
         }
         await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${emp.id}`, {
-          method: 'PATCH', headers, body: JSON.stringify(updates)
+          method: 'PATCH', headers: getHeadersWithToken(portalTokenRef.current), body: JSON.stringify(updates)
         });
         setEmployee(prev => ({ ...prev, ...updates }));
       }
@@ -298,9 +299,12 @@ export default function EmployeeEnrollment() {
     try {
       const reason = optOutReason === 'Other' ? optOutReasonOther : optOutReason;
 
-      // Update employee record
+      // Update employee record (needs x-portal-token for RLS)
+      const tokenHeaders = portalTokenRef.current
+        ? getHeadersWithToken(portalTokenRef.current)
+        : headers;
       await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
-        method: 'PATCH', headers,
+        method: 'PATCH', headers: tokenHeaders,
         body: JSON.stringify({
           enrollment_status: 'Opted Out',
           opted_out_at: new Date().toISOString(),
@@ -389,12 +393,17 @@ export default function EmployeeEnrollment() {
         updates.enrollment_method = 'acknowledged';
         updates.enrolled_at = new Date().toISOString();
       }
+      const tokenHeaders = portalTokenRef.current
+        ? getHeadersWithToken(portalTokenRef.current)
+        : headers;
       await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
-        method: 'PATCH', headers,
+        method: 'PATCH', headers: tokenHeaders,
         body: JSON.stringify(updates)
       });
+      // email_events INSERT is allowed by anon (no RLS check on writes), but we
+      // still include x-portal-token for consistency and in case policies tighten.
       await fetch(`${SUPABASE_URL}/rest/v1/email_events`, {
-        method: 'POST', headers,
+        method: 'POST', headers: tokenHeaders,
         body: JSON.stringify({
           employee_id: employee.id,
           organization_id: employee.organization_id,
