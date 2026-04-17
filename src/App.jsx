@@ -1,90 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-
-const SUPABASE_URL = 'https://aejnfgtttbenrnlmrsam.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlam5mZ3R0dGJlbnJubG1yc2FtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2Mzk5NTMsImV4cCI6MjA5MDIxNTk1M30.8fLf1gmgdtF3J0JaLX_LC73Jk15N451zAfiM6NuDXdU';
+import { COLORS } from '@shared/constants/colors';
+import { BENEFITS, OPT_OUT_REASONS } from '@shared/constants/benefits';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, headers, headersGet } from '@shared/constants/supabase';
+import { getPremiumPerPeriod, getFeePerPeriod, PAY_PERIODS } from '@shared/constants/fees';
+import { formatCurrency } from '@shared/utils/formatters';
+import { useSessionTimeout, SessionWarningModal } from '@shared/hooks/useSessionTimeout';
+import { logPhiAccess, PHI_ACTIONS } from '@shared/hooks/usePhiAccessLog';
 
 // HARDCODED TEST MODE — ALL outbound emails go to jaxon only
 const TEST_EMAIL_RECIPIENT = 'jaxon@livewellhsa.com';
 
-const headers = {
-  'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-  'Content-Type': 'application/json',
-  'Prefer': 'return=minimal'
-};
-const headersGet = {
-  'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-};
-
-const COLORS = {
-  navy: '#1A395C', lime: '#7AC143', sky: '#29ABE2', white: '#FFFFFF',
-  gray: '#F5F7FA', darkGray: '#4A5568', lightGray: '#E2E8F0',
-  red: '#E53E3E', green: '#38A169', yellow: '#D69E2E', orange: '#DD6B20'
-};
-
-const BENEFITS = [
-  {
-    name: '$0 Copay Telemedicine & Virtual Care',
-    poweredBy: 'Powered by MD Live™',
-    icon: '🩺',
-    description: 'Care when you need it, 24/7. Access doctors and health professionals with no copay. Covers your entire household — urgent care, primary care, mental health providers, and dermatology.',
-    color: COLORS.sky
-  },
-  {
-    name: 'Employee Assistance Program',
-    poweredBy: 'Powered by AllOne Health™',
-    icon: '💚',
-    description: 'Confidential support including medical advocacy, coaching, work-life referrals, financial consultations, legal referrals, and a 24/7 crisis management hotline.',
-    color: COLORS.lime
-  },
-  {
-    name: 'OVAL™ Modern Healthcare',
-    poweredBy: null,
-    icon: '💊',
-    description: "Access to dermatology, hormone care, mental health treatments, men's & women's health, anti-aging & performance, and oral weight-care medications. Available in all 50 states.",
-    color: COLORS.navy
-  },
-  {
-    name: 'Prescription Discount Card',
-    poweredBy: null,
-    icon: '💳',
-    description: 'Save on prescription medications at pharmacies nationwide.',
-    color: '#6366f1'
-  },
-  {
-    name: 'Vitals Facial Scanning',
-    poweredBy: 'Powered by Anura™',
-    icon: '📱',
-    description: 'Take your vitals anytime using the Anura™ app — heart rate, breathing, BMI, stress level, and more in 30 seconds.',
-    color: COLORS.orange
-  }
-];
-
-const OPT_OUT_REASONS = [
-  'Not interested in the program',
-  "I don't understand the benefits",
-  'I prefer my current setup',
-  'Financial concerns',
-  'Other'
-];
-
-const formatCurrency = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
-
-function getPremiumPerPeriod(payFrequency) {
-  const map = { 'Weekly': 270.69, 'Biweekly': 541.38, 'Semi-Monthly': 586.50, 'Monthly': 1173 };
-  return map[payFrequency] || 586.50;
-}
-function getFeePerPeriod(payFrequency, isSchool) {
-  if (isSchool) {
-    const periods = { 'Weekly': 52, 'Biweekly': 26, 'Semi-Monthly': 24, 'Monthly': 12 };
-    return 80 * 12 / (periods[payFrequency] || 24);
-  }
-  const map = { 'Weekly': 20.68, 'Biweekly': 41.42, 'Semi-Monthly': 44.87, 'Monthly': 89.73 };
-  return map[payFrequency] || 44.87;
-}
-
 export default function EmployeeEnrollment() {
+  // HIPAA: Session timeout (30 min for employee portal — they need read time)
+  const { showWarning, remainingSeconds, extendSession } = useSessionTimeout({
+    timeoutMinutes: 30,
+    warningSeconds: 60,
+    onTimeout: () => { window.location.href = '/' },
+    enabled: true,
+    portalName: 'employee-enrollment',
+  })
+
   const [step, setStep] = useState('loading'); // loading, login, dashboard, optout, opted-out
   const [companyCode, setCompanyCode] = useState('');
   const [employeeId, setEmployeeId] = useState('');
@@ -141,8 +76,17 @@ export default function EmployeeEnrollment() {
 
   const loadByToken = async (token) => {
     try {
+      // Basic token sanity check (UUID length, no weird chars) before hitting DB
+      if (!token || token.length < 8 || token.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(token)) {
+        setLoginError('Invalid link. Please contact your HR department.');
+        setStep('login');
+        return;
+      }
+      // Require portal_token_expires_at to be in the future (tokens expire ~44 days
+      // after import — 14-day window + 30-day grace for set-password flow).
+      const nowIso = new Date().toISOString();
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/employees?portal_token=eq.${encodeURIComponent(token)}&select=*`,
+        `${SUPABASE_URL}/rest/v1/employees?portal_token=eq.${encodeURIComponent(token)}&portal_token_expires_at=gt.${encodeURIComponent(nowIso)}&select=*`,
         { headers: headersGet }
       );
       const emps = await res.json();
@@ -195,6 +139,7 @@ export default function EmployeeEnrollment() {
         setAcknowledged(true);
       }
 
+      logPhiAccess({ action: PHI_ACTIONS.VIEW_ENROLLMENT, portal: 'employee-enrollment', accessedBy: emp.email || 'employee', employeeId: emp.id, employeeName: `${emp.first_name} ${emp.last_name}`, organizationId: emp.organization_id, fieldsAccessed: ['paycheck_comparison', 'benefits', 'enrollment_status'] })
       setStep(emp.enrollment_status === 'Opted Out' ? 'opted-out' : 'dashboard');
     } catch (err) {
       setLoginError('Something went wrong. Please try again.');
@@ -393,7 +338,7 @@ export default function EmployeeEnrollment() {
       try {
         await fetch(`${SUPABASE_URL}/functions/v1/send-enrollment-email`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
           body: JSON.stringify({
             to: TEST_EMAIL_RECIPIENT, // HARDCODED TEST
             to_name: employee.first_name,
@@ -427,7 +372,7 @@ export default function EmployeeEnrollment() {
       setEmployee(prev => ({ ...prev, enrollment_status: 'Opted Out', opted_out_at: new Date().toISOString() }));
       setStep('opted-out');
     } catch (err) {
-      alert('Failed to process opt-out. Please try again.');
+      console.error('Opt-out error:', err);
     }
     setLoading(false);
   };
@@ -436,8 +381,13 @@ export default function EmployeeEnrollment() {
     setLoading(true);
     try {
       const updates = { email_acknowledged_at: new Date().toISOString() };
+      // Per v2 addendum: acknowledged enrollment is immediate (transitions status
+      // to Enrolled) and sets enrollment_method='acknowledged' so Jaxon's tracker
+      // can distinguish engaged vs. auto-enrolled employees.
       if (['Viewed', 'Email Sent', 'Pending'].includes(employee.enrollment_status)) {
         updates.enrollment_status = 'Enrolled';
+        updates.enrollment_method = 'acknowledged';
+        updates.enrolled_at = new Date().toISOString();
       }
       await fetch(`${SUPABASE_URL}/rest/v1/employees?id=eq.${employee.id}`, {
         method: 'PATCH', headers,
@@ -455,7 +405,7 @@ export default function EmployeeEnrollment() {
       setEmployee(prev => ({ ...prev, ...updates }));
       setAcknowledged(true);
     } catch (err) {
-      alert('Failed to save. Please try again.');
+      console.error('Acknowledge error:', err);
     }
     setLoading(false);
   };
@@ -700,7 +650,7 @@ export default function EmployeeEnrollment() {
               <CompRow label="Medicare" current={-currentMedPP} newVal={-newMedPP} isDeduction isSavings />
 
               {/* Post-tax */}
-              <CompRow label="LW Employee Fee" current={0} newVal={-feePP} isDeduction isNew />
+              <CompRow label="LW 360 Fee" current={0} newVal={-feePP} isDeduction isNew />
               <CompRow label="LW Reimbursement" current={0} newVal={reimbPP} isNew isPositive />
 
               {/* Net */}
@@ -721,7 +671,7 @@ export default function EmployeeEnrollment() {
               <SavingsRow label="FIT Savings" amount={fitSavingsMonthly} color={COLORS.green} />
               {ssSavingsMonthly > 0 && <SavingsRow label="Social Security Savings" amount={ssSavingsMonthly} color={COLORS.green} />}
               <SavingsRow label="Medicare Savings" amount={medSavingsMonthly} color={COLORS.green} />
-              <SavingsRow label={`Employee Fee (${formatCurrency(employee?.lw_fee_per_period || feePP)}/check)`} amount={-feeMonthly} color={COLORS.red} />
+              <SavingsRow label={`LW 360 Fee (${formatCurrency(feePP)}/check)`} amount={-feeMonthly} color={COLORS.red} />
               <div style={{ borderTop: `1px solid ${COLORS.lightGray}`, paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600 }}>
                 <span style={{ color: COLORS.navy }}>Net Monthly Benefit</span>
                 <span style={{ color: COLORS.lime }}>{formatCurrency(netBenefitMonthly)}</span>
@@ -730,8 +680,8 @@ export default function EmployeeEnrollment() {
           </div>
 
           <p style={{ fontSize: 12, color: COLORS.darkGray, margin: '16px 0 0', lineHeight: 1.5 }}>
-            A ${formatCurrency(1173)}/month wellness premium is deducted pre-tax from your paycheck, then 100% reimbursed post-tax.
-            Your net gain comes from the tax savings on that pre-tax deduction, minus a small employee fee.
+            A {formatCurrency(1173)}/month wellness premium is deducted pre-tax from your paycheck, then 100% reimbursed post-tax.
+            Your net gain comes from the tax savings on that pre-tax deduction, minus a small program fee.
           </p>
         </div>
 
@@ -830,7 +780,7 @@ export default function EmployeeEnrollment() {
             <a href="tel:8067991099" style={{ padding: '12px 24px', fontSize: 14, fontWeight: 500, background: COLORS.navy, color: COLORS.white, borderRadius: 8, textDecoration: 'none' }}>
               (806) 799-1099
             </a>
-            <a href="mailto:info@livewellhsa.com" style={{ padding: '12px 24px', fontSize: 14, fontWeight: 500, background: 'transparent', color: COLORS.navy, border: `2px solid ${COLORS.navy}`, borderRadius: 8, textDecoration: 'none' }}>
+            <a href="mailto:info@livewellhealth360.com" style={{ padding: '12px 24px', fontSize: 14, fontWeight: 500, background: 'transparent', color: COLORS.navy, border: `2px solid ${COLORS.navy}`, borderRadius: 8, textDecoration: 'none' }}>
               Email Us
             </a>
           </div>
@@ -844,6 +794,9 @@ export default function EmployeeEnrollment() {
           </button>
         </div>
       </div>
+
+      {/* HIPAA: Session Timeout Warning */}
+      {showWarning && <SessionWarningModal seconds={remainingSeconds} onExtend={extendSession} />}
 
       {/* Footer */}
       <div style={{ background: COLORS.navy, padding: 20, textAlign: 'center' }}>
@@ -901,3 +854,4 @@ function SavingsRow({ label, amount, color }) {
     </div>
   );
 }
+
