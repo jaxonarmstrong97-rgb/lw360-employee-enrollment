@@ -536,7 +536,7 @@ export default function EmployeeEnrollment() {
               <li><strong>{formatCurrency(employee?.net_benefit_monthly || 0)}/month</strong> in additional take-home pay</li>
               <li>Free 24/7 telemedicine & virtual care for your household</li>
               <li>Employee Assistance Program (advocacy, coaching, crisis hotline)</li>
-              <li>OVAL Modern Healthcare, prescription discounts & more</li>
+              <li>Oval Care telehealth, prescription discounts & more</li>
             </ul>
           </div>
 
